@@ -1,18 +1,43 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
+// Intensity levels for truths and dares
+export type Intensity = "mild" | "spicy" | "extreme";
+
+// Player schema
+export const playerSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1, "Name is required"),
 });
 
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
+export type Player = z.infer<typeof playerSchema>;
+
+export const insertPlayerSchema = playerSchema.omit({ id: true });
+export type InsertPlayer = z.infer<typeof insertPlayerSchema>;
+
+// Truth/Dare prompt schema
+export const promptSchema = z.object({
+  id: z.string(),
+  type: z.enum(["truth", "dare"]),
+  intensity: z.enum(["mild", "spicy", "extreme"]),
+  text: z.string(),
 });
 
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
+export type Prompt = z.infer<typeof promptSchema>;
+
+// Game state schema
+export const gameStateSchema = z.object({
+  players: z.array(playerSchema),
+  currentIntensity: z.enum(["mild", "spicy", "extreme"]),
+  currentPrompt: promptSchema.nullable(),
+});
+
+export type GameState = z.infer<typeof gameStateSchema>;
+
+// API request/response types
+export const generatePromptRequestSchema = z.object({
+  type: z.enum(["truth", "dare"]),
+  intensity: z.enum(["mild", "spicy", "extreme"]),
+  players: z.array(z.string()),
+});
+
+export type GeneratePromptRequest = z.infer<typeof generatePromptRequestSchema>;
