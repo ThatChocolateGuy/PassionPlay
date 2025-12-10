@@ -48,8 +48,12 @@ export type Favorite = typeof favorites.$inferSelect;
 export const genderSchema = z.enum(["male", "female"]);
 export type Gender = z.infer<typeof genderSchema>;
 
+// Sexual preference enum
+export const sexualPreferenceSchema = z.enum(["heterosexual", "bisexual", "homosexual"]);
+export type SexualPreference = z.infer<typeof sexualPreferenceSchema>;
+
 // Intensity levels
-export const intensitySchema = z.enum(["mild", "spicy", "extreme"]);
+export const intensitySchema = z.enum(["mild", "spicy", "extreme", "group"]);
 export type Intensity = z.infer<typeof intensitySchema>;
 
 // Couple schema
@@ -61,12 +65,13 @@ export const coupleSchema = z.object({
 
 export type Couple = z.infer<typeof coupleSchema>;
 
-// Player schema with gender and couple
+// Player schema with gender, couple, and sexual preference
 export const playerSchema = z.object({
   id: z.string(),
   name: z.string().min(1, "Name is required"),
   gender: genderSchema,
   coupleId: z.string().optional(),
+  sexualPreference: sexualPreferenceSchema.default("bisexual"),
 });
 
 export type Player = z.infer<typeof playerSchema>;

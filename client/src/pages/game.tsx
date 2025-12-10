@@ -32,7 +32,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import type { Intensity, Player, Prompt, Couple, Favorite, CustomPrompt } from "@shared/schema";
+import type { Intensity, Player, Prompt, Couple, Favorite, CustomPrompt, SexualPreference } from "@shared/schema";
 
 const intensityConfig = {
   mild: {
@@ -53,6 +53,18 @@ const intensityConfig = {
     description: "No limits",
     gradient: "from-purple-500 to-pink-600",
   },
+  group: {
+    label: "Group",
+    icon: Users,
+    description: "Multiple partners",
+    gradient: "from-red-600 to-purple-700",
+  },
+};
+
+const preferenceConfig = {
+  heterosexual: { label: "Straight", short: "Str" },
+  bisexual: { label: "Bisexual", short: "Bi" },
+  homosexual: { label: "Gay/Lesbian", short: "Gay" },
 };
 
 const coupleColors = [
@@ -70,6 +82,7 @@ export default function Game() {
   const [newPlayerName, setNewPlayerName] = useState("");
   const [newPlayerGender, setNewPlayerGender] = useState<"male" | "female">("male");
   const [newPlayerCoupleId, setNewPlayerCoupleId] = useState<string>("");
+  const [newPlayerPreference, setNewPlayerPreference] = useState<SexualPreference>("bisexual");
   const [newCoupleName, setNewCoupleName] = useState("");
   const [intensity, setIntensity] = useState<Intensity>("spicy");
   const [currentPrompt, setCurrentPrompt] = useState<Prompt | null>(null);
@@ -235,10 +248,11 @@ export default function Game() {
       name: trimmedName,
       gender: newPlayerGender,
       coupleId: newPlayerCoupleId && newPlayerCoupleId !== "none" ? newPlayerCoupleId : undefined,
+      sexualPreference: newPlayerPreference,
     };
     setPlayers((prev) => [...prev, newPlayer]);
     setNewPlayerName("");
-  }, [newPlayerName, newPlayerGender, newPlayerCoupleId, players, toast]);
+  }, [newPlayerName, newPlayerGender, newPlayerCoupleId, newPlayerPreference, players, toast]);
 
   const removePlayer = useCallback((id: string) => {
     setPlayers((prev) => prev.filter((p) => p.id !== id));
@@ -633,7 +647,7 @@ export default function Game() {
                   data-testid="input-player-name"
                 />
                 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <Select value={newPlayerGender} onValueChange={(v) => setNewPlayerGender(v as "male" | "female")}>
                     <SelectTrigger className="bg-white/10 border-white/20 text-white" data-testid="select-gender">
                       <SelectValue placeholder="Gender" />
@@ -644,9 +658,20 @@ export default function Game() {
                     </SelectContent>
                   </Select>
                   
+                  <Select value={newPlayerPreference} onValueChange={(v) => setNewPlayerPreference(v as SexualPreference)}>
+                    <SelectTrigger className="bg-white/10 border-white/20 text-white" data-testid="select-preference">
+                      <SelectValue placeholder="Preference" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-900 border-white/10">
+                      <SelectItem value="heterosexual" data-testid="select-preference-straight">Straight</SelectItem>
+                      <SelectItem value="bisexual" data-testid="select-preference-bi">Bisexual</SelectItem>
+                      <SelectItem value="homosexual" data-testid="select-preference-gay">Gay/Lesbian</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  
                   <Select value={newPlayerCoupleId} onValueChange={setNewPlayerCoupleId}>
                     <SelectTrigger className="bg-white/10 border-white/20 text-white" data-testid="select-couple">
-                      <SelectValue placeholder="Couple (optional)" />
+                      <SelectValue placeholder="Couple" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-900 border-white/10">
                       <SelectItem value="none" data-testid="select-couple-none">No couple</SelectItem>
@@ -686,9 +711,12 @@ export default function Game() {
                         </div>
                         <div>
                           <span className="text-rose-100 font-medium">{player.name}</span>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1 flex-wrap">
                             <Badge variant="outline" className={`text-xs ${player.gender === 'male' ? 'border-blue-400/50 text-blue-300' : 'border-pink-400/50 text-pink-300'}`}>
                               {player.gender === 'male' ? 'M' : 'F'}
+                            </Badge>
+                            <Badge variant="outline" className="text-xs border-purple-400/50 text-purple-300">
+                              {preferenceConfig[player.sexualPreference || "bisexual"].short}
                             </Badge>
                             {player.coupleId && (
                               <Badge variant="outline" className="text-xs border-amber-400/50 text-amber-300">

@@ -1,4 +1,4 @@
-import type { Intensity, Prompt, Player, CustomPrompt, InsertCustomPrompt, Favorite, InsertFavorite } from "@shared/schema";
+import type { Intensity, Prompt, Player, CustomPrompt, InsertCustomPrompt, Favorite, InsertFavorite, SexualPreference } from "@shared/schema";
 import { customPrompts, favorites } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -85,6 +85,28 @@ const truths: Record<Intensity, string[]> = {
     "Describe your most intense orgasm - was it with {partner}?",
     "What would you do with {male_player} and {female_player} together if there were no consequences?",
   ],
+  group: [
+    "Describe your ultimate fantasy involving everyone in this room.",
+    "Who here would you want to be sandwiched between? Describe what you'd do.",
+    "If you could orchestrate a group encounter with everyone here, how would it go?",
+    "Rate everyone in this room from 1-10 on who you'd want to share a bed with.",
+    "Describe in detail your hottest group fantasy involving {male_player}, {female_player}, and {player}.",
+    "If {partner} gave you permission for one night with multiple people here, who and what would you do?",
+    "What's the most you'd do with {male_player} while {female_player} watched and participated?",
+    "Describe your fantasy of being pleasured by {player} and {partner} at the same time.",
+    "If everyone here was naked, who would you touch first, second, and third?",
+    "What boundaries would you break if {male_player}, {female_player}, and {player} all wanted you tonight?",
+    "Describe your ideal partner-swap scenario with the couples here.",
+    "Who in this room do you think would be the best in a threesome? Who would join them?",
+    "If you could dominate multiple people here at once, who and how?",
+    "What's the dirtiest thing you've ever fantasized about doing with more than one person?",
+    "Describe how you'd pleasure {male_player} and {female_player} simultaneously.",
+    "If you were in the center of a group situation, what would you want everyone doing to you?",
+    "Who here would you include in your ultimate orgy fantasy and what role would each play?",
+    "Describe exactly what you'd do if {player}, {male_player}, and {female_player} were all in your bed.",
+    "What's the most explicit group scenario you've ever imagined involving people you know?",
+    "If everyone here consented to anything, what would you propose we do right now?",
+  ],
 };
 
 const dares: Record<Intensity, string[]> = {
@@ -164,6 +186,28 @@ const dares: Record<Intensity, string[]> = {
     "Act out your ultimate fantasy with {player} for 3 minutes.",
     "Let {player} do whatever they want to you - their choice.",
   ],
+  group: [
+    "Make out with {male_player} and {female_player} simultaneously for 2 minutes.",
+    "Let everyone in the room touch you somewhere appropriate for 10 seconds each.",
+    "Perform a strip tease while everyone watches and gives you tips on what to remove next.",
+    "Give {player} a lap dance while {male_player} and {female_player} join in touching you.",
+    "Be blindfolded while three different people kiss you - guess who each one is.",
+    "Go into a private space with {male_player} and {female_player} for 5 minutes. No rules.",
+    "Let {player} and {partner} massage you simultaneously - they choose where.",
+    "Demonstrate on {male_player} and {female_player} how you like to be kissed.",
+    "Lie in the center while everyone takes turns leaving marks on you.",
+    "Play 'pass the kiss' - kiss {player}, they kiss {male_player}, continue around.",
+    "Let {male_player} and {female_player} undress you together.",
+    "Recreate a group scene from your favorite fantasy with willing participants.",
+    "Be the center of attention - everyone must touch or kiss you for 1 minute straight.",
+    "Trade an article of clothing with {player}, {male_player}, and {female_player}.",
+    "Let two people of different genders give you a simultaneous massage under your clothes.",
+    "Act out being pleasured by {male_player} while kissing {female_player}.",
+    "Everyone whispers something dirty to you - pick your favorite and act it out with them.",
+    "Let {player} and {partner} compete to give you the best 30-second kiss.",
+    "Be sandwiched between {male_player} and {female_player} for 2 minutes.",
+    "Propose a group dare and everyone must participate if they agree.",
+  ],
 };
 
 export interface IStorage {
@@ -208,46 +252,132 @@ export class MemStorage implements IStorage {
     return players.find(p => p.coupleId === currentPlayer.coupleId && p.id !== currentPlayer.id) || null;
   }
 
-  private replacePlayerPlaceholders(text: string, players: Player[], currentPlayer: Player): string {
-    const males = this.getPlayersByGender(players, "male");
-    const females = this.getPlayersByGender(players, "female");
+  // Check if player A can interact with player B based on BOTH of their preferences
+  private areMutuallyCompatible(playerA: Player, playerB: Player): boolean {
+    const prefA = playerA.sexualPreference || "bisexual";
+    const prefB = playerB.sexualPreference || "bisexual";
+    
+    // Check if A is attracted to B's gender
+    const aAttractedToB = this.isAttractedTo(playerA, playerB.gender);
+    // Check if B is attracted to A's gender
+    const bAttractedToA = this.isAttractedTo(playerB, playerA.gender);
+    
+    return aAttractedToB && bAttractedToA;
+  }
+
+  // Check if a player is attracted to a specific gender based on their preference
+  private isAttractedTo(player: Player, targetGender: "male" | "female"): boolean {
+    const preference = player.sexualPreference || "bisexual";
+    const playerGender = player.gender;
+    
+    switch (preference) {
+      case "heterosexual":
+        return targetGender !== playerGender;
+      case "homosexual":
+        return targetGender === playerGender;
+      case "bisexual":
+      default:
+        return true;
+    }
+  }
+
+  // Get players that the current player can interact with based on MUTUAL sexual preference
+  private getCompatiblePlayers(players: Player[], currentPlayer: Player): Player[] {
+    return players.filter(p => {
+      if (p.id === currentPlayer.id) return false;
+      return this.areMutuallyCompatible(currentPlayer, p);
+    });
+  }
+
+  // Get compatible players filtered by gender
+  private getCompatiblePlayersByGender(players: Player[], currentPlayer: Player, gender: "male" | "female"): Player[] {
+    return this.getCompatiblePlayers(players, currentPlayer).filter(p => p.gender === gender);
+  }
+
+  // Check if a prompt template is compatible with current player's preferences
+  // Returns true only if we can fill all gender-specific placeholders with mutually compatible players
+  private isPromptCompatible(promptText: string, currentPlayer: Player, players: Player[]): boolean {
+    const compatiblePlayers = this.getCompatiblePlayers(players, currentPlayer);
+    
+    // Must have at least one compatible player
+    if (compatiblePlayers.length === 0) return false;
+    
+    // Check for gender-specific placeholders
+    const hasMalePlaceholder = promptText.includes("{male_player}");
+    const hasFemalePlaceholder = promptText.includes("{female_player}");
+    
+    // Count how many of each gender placeholder we need
+    const maleCount = (promptText.match(/\{male_player\}/g) || []).length;
+    const femaleCount = (promptText.match(/\{female_player\}/g) || []).length;
+    
+    // Get compatible players of each gender
+    const compatibleMales = this.getCompatiblePlayersByGender(players, currentPlayer, "male");
+    const compatibleFemales = this.getCompatiblePlayersByGender(players, currentPlayer, "female");
+    
+    // If prompt needs males, we need enough compatible males
+    if (hasMalePlaceholder && compatibleMales.length < maleCount) {
+      return false;
+    }
+    
+    // If prompt needs females, we need enough compatible females
+    if (hasFemalePlaceholder && compatibleFemales.length < femaleCount) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  // Returns null if placeholder cannot be filled with compatible player
+  private replacePlayerPlaceholders(text: string, players: Player[], currentPlayer: Player): string | null {
     const partner = this.getPartner(players, currentPlayer);
+    const compatiblePlayers = this.getCompatiblePlayers(players, currentPlayer);
+    const compatibleMales = this.getCompatiblePlayersByGender(players, currentPlayer, "male");
+    const compatibleFemales = this.getCompatiblePlayersByGender(players, currentPlayer, "female");
     const usedPlayerIds: string[] = [currentPlayer.id];
     
     let result = text;
     
-    // Replace {partner} first
+    // Replace {partner} first - partner is always ok regardless of preference
     if (result.includes("{partner}")) {
       const partnerName = partner?.name || "your partner";
       result = result.replace(/\{partner\}/g, partnerName);
       if (partner) usedPlayerIds.push(partner.id);
     }
     
-    // Replace {male_player} - get a random male (preferably not current player or their partner)
+    // Replace {male_player} - use mutually compatible males only
     while (result.includes("{male_player}")) {
-      const availableMales = males.filter(m => !usedPlayerIds.includes(m.id));
-      const selectedMale = this.getRandomPlayer(availableMales) || this.getRandomPlayer(males);
-      const maleName = selectedMale?.name || "a guy";
-      result = result.replace("{male_player}", maleName);
-      if (selectedMale) usedPlayerIds.push(selectedMale.id);
+      const availableMales = compatibleMales.filter(m => !usedPlayerIds.includes(m.id));
+      const selectedMale = this.getRandomPlayer(availableMales);
+      if (!selectedMale) {
+        // Cannot fill this placeholder with a compatible player
+        return null;
+      }
+      result = result.replace("{male_player}", selectedMale.name);
+      usedPlayerIds.push(selectedMale.id);
     }
     
-    // Replace {female_player} - get a random female (preferably not current player or their partner)
+    // Replace {female_player} - use mutually compatible females only
     while (result.includes("{female_player}")) {
-      const availableFemales = females.filter(f => !usedPlayerIds.includes(f.id));
-      const selectedFemale = this.getRandomPlayer(availableFemales) || this.getRandomPlayer(females);
-      const femaleName = selectedFemale?.name || "a girl";
-      result = result.replace("{female_player}", femaleName);
-      if (selectedFemale) usedPlayerIds.push(selectedFemale.id);
+      const availableFemales = compatibleFemales.filter(f => !usedPlayerIds.includes(f.id));
+      const selectedFemale = this.getRandomPlayer(availableFemales);
+      if (!selectedFemale) {
+        // Cannot fill this placeholder with a compatible player
+        return null;
+      }
+      result = result.replace("{female_player}", selectedFemale.name);
+      usedPlayerIds.push(selectedFemale.id);
     }
     
-    // Replace generic {player} - any player not already used
+    // Replace generic {player} - use mutually compatible players only
     while (result.includes("{player}")) {
-      const availablePlayers = players.filter(p => !usedPlayerIds.includes(p.id));
-      const selectedPlayer = this.getRandomPlayer(availablePlayers) || this.getRandomPlayer(players);
-      const playerName = selectedPlayer?.name || "someone";
-      result = result.replace("{player}", playerName);
-      if (selectedPlayer) usedPlayerIds.push(selectedPlayer.id);
+      const compatibleAvailable = compatiblePlayers.filter(p => !usedPlayerIds.includes(p.id));
+      const selectedPlayer = this.getRandomPlayer(compatibleAvailable);
+      if (!selectedPlayer) {
+        // Cannot fill this placeholder with a compatible player
+        return null;
+      }
+      result = result.replace("{player}", selectedPlayer.name);
+      usedPlayerIds.push(selectedPlayer.id);
     }
     
     return result;
@@ -276,13 +406,21 @@ export class MemStorage implements IStorage {
     
     const allPrompts = [...content, ...customPromptTexts];
     
-    // Try to get an unused prompt first
-    let availablePrompts = allPrompts.filter(p => !this.usedPromptIds.has(`${type}-${intensity}-${p}`));
+    // Filter prompts based on current player's sexual preference compatibility
+    let compatiblePrompts = allPrompts.filter(p => this.isPromptCompatible(p, currentPlayer, players));
     
-    // If all prompts have been used, reset
+    // If no compatible prompts exist, fall back to all prompts (edge case)
+    if (compatiblePrompts.length === 0) {
+      compatiblePrompts = allPrompts;
+    }
+    
+    // Try to get an unused prompt first
+    let availablePrompts = compatiblePrompts.filter(p => !this.usedPromptIds.has(`${type}-${intensity}-${p}`));
+    
+    // If all compatible prompts have been used, reset
     if (availablePrompts.length === 0) {
-      allPrompts.forEach(p => this.usedPromptIds.delete(`${type}-${intensity}-${p}`));
-      availablePrompts = allPrompts;
+      compatiblePrompts.forEach(p => this.usedPromptIds.delete(`${type}-${intensity}-${p}`));
+      availablePrompts = compatiblePrompts;
     }
     
     // Filter out any that match exclude patterns
@@ -291,25 +429,42 @@ export class MemStorage implements IStorage {
     }
     
     if (availablePrompts.length === 0) {
-      availablePrompts = allPrompts;
+      availablePrompts = compatiblePrompts;
     }
     
-    const randomIndex = Math.floor(Math.random() * availablePrompts.length);
-    const selectedPrompt = availablePrompts[randomIndex];
+    // Shuffle available prompts and try to find one that can be personalized
+    const shuffledPrompts = [...availablePrompts].sort(() => Math.random() - 0.5);
+    
+    for (const candidatePrompt of shuffledPrompts) {
+      const personalizedText = this.replacePlayerPlaceholders(candidatePrompt, players, currentPlayer);
+      
+      if (personalizedText !== null) {
+        const promptId = randomUUID();
+        
+        // Mark as used
+        this.usedPromptIds.add(`${type}-${intensity}-${candidatePrompt}`);
+        
+        return {
+          id: promptId,
+          type,
+          intensity,
+          text: personalizedText,
+          isCustom: customPromptTexts.includes(candidatePrompt),
+        };
+      }
+    }
+    
+    // Fallback: if no prompts could be personalized, return a generic prompt
+    // This should rarely happen if isPromptCompatible is working correctly
     const promptId = randomUUID();
-    
-    // Mark as used
-    this.usedPromptIds.add(`${type}-${intensity}-${selectedPrompt}`);
-    
-    // Replace player placeholders with gender awareness
-    const personalizedText = this.replacePlayerPlaceholders(selectedPrompt, players, currentPlayer);
-    
     return {
       id: promptId,
       type,
       intensity,
-      text: personalizedText,
-      isCustom: customPromptTexts.includes(selectedPrompt),
+      text: type === "truth" 
+        ? "What's something exciting you've always wanted to try?" 
+        : "Do something daring that surprises everyone.",
+      isCustom: false,
     };
   }
 
