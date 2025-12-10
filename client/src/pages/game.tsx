@@ -1,15 +1,16 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Flame, Heart, Zap, X, Plus, Users, Shuffle, Sparkles, 
-  ChevronRight, Timer, Star, UserPlus, Crown
+  ChevronRight, Timer, Star, UserPlus, Crown, BookOpen, PenLine, Trash2
 } from "lucide-react";
 import {
   Select,
@@ -25,7 +26,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import type { Intensity, Player, Prompt, Couple } from "@shared/schema";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import type { Intensity, Player, Prompt, Couple, Favorite, CustomPrompt } from "@shared/schema";
 
 const intensityConfig = {
   mild: {
@@ -74,7 +81,82 @@ export default function Game() {
   const [timerActive, setTimerActive] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(60);
   const [showAddCouple, setShowAddCouple] = useState(false);
+  const [showCustomPrompts, setShowCustomPrompts] = useState(false);
+  const [showFavorites, setShowFavorites] = useState(false);
+  const [newCustomType, setNewCustomType] = useState<"truth" | "dare">("truth");
+  const [newCustomIntensity, setNewCustomIntensity] = useState<Intensity>("spicy");
+  const [newCustomText, setNewCustomText] = useState("");
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
+
+  // Fetch favorites
+  const { data: favorites = [] } = useQuery<Favorite[]>({
+    queryKey: ["/api/favorites"],
+  });
+
+  // Fetch custom prompts
+  const { data: customPrompts = [] } = useQuery<CustomPrompt[]>({
+    queryKey: ["/api/custom-prompts"],
+  });
+
+  // Add favorite mutation
+  const addFavoriteMutation = useMutation({
+    mutationFn: async (favorite: { promptText: string; promptType: string; intensity: string; category?: string }) => {
+      const response = await apiRequest("POST", "/api/favorites", favorite);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/favorites"] });
+      toast({
+        title: "Saved!",
+        description: "Added to your favorites.",
+      });
+    },
+  });
+
+  // Remove favorite mutation
+  const removeFavoriteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/favorites/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/favorites"] });
+      toast({
+        title: "Removed",
+        description: "Removed from favorites.",
+      });
+    },
+  });
+
+  // Add custom prompt mutation
+  const addCustomPromptMutation = useMutation({
+    mutationFn: async (prompt: { type: string; intensity: string; text: string }) => {
+      const response = await apiRequest("POST", "/api/custom-prompts", prompt);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-prompts"] });
+      setNewCustomText("");
+      toast({
+        title: "Created!",
+        description: "Your custom prompt has been added.",
+      });
+    },
+  });
+
+  // Delete custom prompt mutation
+  const deleteCustomPromptMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/custom-prompts/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-prompts"] });
+      toast({
+        title: "Deleted",
+        description: "Custom prompt removed.",
+      });
+    },
+  });
 
   const generateMutation = useMutation({
     mutationFn: async ({ type, intensity, players, currentPlayerId }: { 
@@ -152,7 +234,7 @@ export default function Game() {
       id: crypto.randomUUID(),
       name: trimmedName,
       gender: newPlayerGender,
-      coupleId: newPlayerCoupleId || undefined,
+      coupleId: newPlayerCoupleId && newPlayerCoupleId !== "none" ? newPlayerCoupleId : undefined,
     };
     setPlayers((prev) => [...prev, newPlayer]);
     setNewPlayerName("");
@@ -210,14 +292,18 @@ export default function Game() {
     setCurrentPrompt(null);
     setTimerActive(false);
     setTimerSeconds(60);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
   }, [currentPlayerIndex, players.length]);
 
   const startTimer = useCallback(() => {
     setTimerActive(true);
-    const interval = setInterval(() => {
+    timerRef.current = setInterval(() => {
       setTimerSeconds((prev) => {
         if (prev <= 1) {
-          clearInterval(interval);
+          if (timerRef.current) clearInterval(timerRef.current);
           setTimerActive(false);
           toast({
             title: "Time's up!",
@@ -230,17 +316,62 @@ export default function Game() {
     }, 1000);
   }, [toast]);
 
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       addPlayer();
     }
   };
 
+  const saveCurrentAsFavorite = useCallback(() => {
+    if (!currentPrompt) return;
+    
+    // Check if already favorited
+    const alreadyFavorited = favorites.some(f => f.promptText === currentPrompt.text);
+    if (alreadyFavorited) {
+      toast({
+        title: "Already saved",
+        description: "This prompt is already in your favorites.",
+      });
+      return;
+    }
+    
+    addFavoriteMutation.mutate({
+      promptText: currentPrompt.text,
+      promptType: currentPrompt.type,
+      intensity: currentPrompt.intensity,
+    });
+  }, [currentPrompt, favorites, addFavoriteMutation, toast]);
+
+  const addCustomPrompt = useCallback(() => {
+    if (!newCustomText.trim()) {
+      toast({
+        title: "Text required",
+        description: "Please enter the prompt text.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    addCustomPromptMutation.mutate({
+      type: newCustomType,
+      intensity: newCustomIntensity,
+      text: newCustomText.trim(),
+    });
+  }, [newCustomText, newCustomType, newCustomIntensity, addCustomPromptMutation, toast]);
+
   const currentPlayer = players[currentPlayerIndex];
   const currentCouple = currentPlayer?.coupleId 
     ? couples.find(c => c.id === currentPlayer.coupleId) 
     : null;
   const isGenerating = generateMutation.isPending;
+  const isCurrentFavorited = currentPrompt ? favorites.some(f => f.promptText === currentPrompt.text) : false;
 
   const getCoupleColor = (coupleId?: string) => {
     if (!coupleId) return "from-gray-500 to-gray-600";
@@ -268,6 +399,147 @@ export default function Game() {
             </h1>
             <p className="text-rose-200/70 text-lg">Setup your game</p>
           </motion.header>
+
+          {/* Quick Actions */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex gap-2 justify-center mb-6"
+          >
+            <Dialog open={showCustomPrompts} onOpenChange={setShowCustomPrompts}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="border-white/20 text-rose-100 hover:bg-white/10" data-testid="button-custom-prompts">
+                  <PenLine className="w-4 h-4 mr-1" /> Custom Prompts
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="bg-slate-900 border-white/10 max-w-lg max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle className="text-rose-100">Custom Prompts</DialogTitle>
+                </DialogHeader>
+                <Tabs defaultValue="create" className="w-full">
+                  <TabsList className="w-full bg-white/10">
+                    <TabsTrigger value="create" className="flex-1 data-[state=active]:bg-pink-500">Create New</TabsTrigger>
+                    <TabsTrigger value="list" className="flex-1 data-[state=active]:bg-pink-500">Your Prompts ({customPrompts.length})</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="create" className="space-y-4 mt-4">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Select value={newCustomType} onValueChange={(v) => setNewCustomType(v as "truth" | "dare")}>
+                        <SelectTrigger className="bg-white/10 border-white/20 text-white" data-testid="select-custom-type">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-900 border-white/10">
+                          <SelectItem value="truth">Truth</SelectItem>
+                          <SelectItem value="dare">Dare</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select value={newCustomIntensity} onValueChange={(v) => setNewCustomIntensity(v as Intensity)}>
+                        <SelectTrigger className="bg-white/10 border-white/20 text-white" data-testid="select-custom-intensity">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-900 border-white/10">
+                          <SelectItem value="mild">Mild</SelectItem>
+                          <SelectItem value="spicy">Spicy</SelectItem>
+                          <SelectItem value="extreme">Extreme</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Textarea
+                      placeholder="Enter your custom truth or dare... Use {player}, {male_player}, {female_player}, or {partner} for personalization"
+                      value={newCustomText}
+                      onChange={(e) => setNewCustomText(e.target.value)}
+                      className="bg-white/10 border-white/20 text-white placeholder:text-white/40 min-h-[100px]"
+                      data-testid="input-custom-text"
+                    />
+                    <Button 
+                      onClick={addCustomPrompt} 
+                      className="w-full bg-pink-500 hover:bg-pink-600"
+                      disabled={addCustomPromptMutation.isPending}
+                      data-testid="button-save-custom"
+                    >
+                      <Plus className="w-4 h-4 mr-2" /> Add Custom Prompt
+                    </Button>
+                  </TabsContent>
+                  <TabsContent value="list" className="mt-4 space-y-2 max-h-[300px] overflow-y-auto">
+                    {customPrompts.length === 0 ? (
+                      <p className="text-rose-200/50 text-center py-4">No custom prompts yet</p>
+                    ) : (
+                      customPrompts.map((prompt) => (
+                        <div key={prompt.id} className="p-3 rounded-lg bg-white/5 flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant="outline" className={prompt.type === "truth" ? "border-blue-400/50 text-blue-300" : "border-orange-400/50 text-orange-300"}>
+                                {prompt.type}
+                              </Badge>
+                              <Badge variant="outline" className="border-purple-400/50 text-purple-300 text-xs">
+                                {prompt.intensity}
+                              </Badge>
+                            </div>
+                            <p className="text-rose-100 text-sm">{prompt.text}</p>
+                          </div>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => deleteCustomPromptMutation.mutate(prompt.id)}
+                            className="text-rose-300 hover:text-rose-100 hover:bg-white/10 shrink-0"
+                            data-testid={`button-delete-custom-${prompt.id}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={showFavorites} onOpenChange={setShowFavorites}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="border-white/20 text-rose-100 hover:bg-white/10" data-testid="button-view-favorites">
+                  <Star className="w-4 h-4 mr-1" /> Favorites ({favorites.length})
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="bg-slate-900 border-white/10 max-w-lg max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle className="text-rose-100 flex items-center gap-2">
+                    <Star className="w-5 h-5 text-amber-400" /> Your Favorites
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="space-y-2 mt-4 max-h-[400px] overflow-y-auto">
+                  {favorites.length === 0 ? (
+                    <p className="text-rose-200/50 text-center py-8">
+                      No favorites yet. Star prompts during the game to save them here!
+                    </p>
+                  ) : (
+                    favorites.map((fav) => (
+                      <div key={fav.id} className="p-3 rounded-lg bg-white/5 flex items-start justify-between gap-2">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge variant="outline" className={fav.promptType === "truth" ? "border-blue-400/50 text-blue-300" : "border-orange-400/50 text-orange-300"}>
+                              {fav.promptType}
+                            </Badge>
+                            <Badge variant="outline" className="border-purple-400/50 text-purple-300 text-xs">
+                              {fav.intensity}
+                            </Badge>
+                          </div>
+                          <p className="text-rose-100 text-sm">{fav.promptText}</p>
+                        </div>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => removeFavoriteMutation.mutate(fav.id)}
+                          className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 shrink-0"
+                          data-testid={`button-remove-favorite-${fav.id}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+          </motion.div>
 
           {/* Couples Section */}
           <motion.div
@@ -482,7 +754,7 @@ export default function Game() {
         <motion.header
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-center justify-between mb-6"
+          className="flex items-center justify-between gap-2 mb-6 flex-wrap"
         >
           <Button
             variant="ghost"
@@ -494,7 +766,16 @@ export default function Game() {
             <Users className="w-4 h-4 mr-1" /> Setup
           </Button>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowFavorites(true)}
+              className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/20"
+              data-testid="button-header-favorites"
+            >
+              <BookOpen className="w-4 h-4" />
+            </Button>
             <Badge className="bg-purple-500/30 text-purple-200 border-purple-400/30" data-testid="badge-round">
               Round {roundNumber}
             </Badge>
@@ -612,10 +893,12 @@ export default function Game() {
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/20"
+                      onClick={saveCurrentAsFavorite}
+                      className={`${isCurrentFavorited ? 'text-amber-400' : 'text-amber-400/50'} hover:text-amber-300 hover:bg-amber-500/20`}
+                      disabled={addFavoriteMutation.isPending}
                       data-testid="button-favorite"
                     >
-                      <Star className="w-4 h-4" />
+                      <Star className={`w-4 h-4 ${isCurrentFavorited ? 'fill-current' : ''}`} />
                     </Button>
                   </div>
                   <p className="text-xl md:text-2xl lg:text-3xl font-medium text-white leading-relaxed" data-testid="text-current-prompt">
@@ -625,7 +908,7 @@ export default function Game() {
                   {/* Timer for dares */}
                   {currentPrompt.type === "dare" && (
                     <div className="mt-6 flex items-center justify-center gap-3">
-                      {!timerActive ? (
+                      {!timerActive && timerSeconds === 60 ? (
                         <Button
                           onClick={startTimer}
                           variant="outline"
@@ -636,7 +919,7 @@ export default function Game() {
                           Start Timer (60s)
                         </Button>
                       ) : (
-                        <div className="flex items-center gap-2 text-2xl font-mono text-pink-300" data-testid="text-timer">
+                        <div className={`flex items-center gap-2 text-2xl font-mono ${timerSeconds <= 10 ? 'text-red-400' : 'text-pink-300'}`} data-testid="text-timer">
                           <Timer className="w-6 h-6" />
                           {Math.floor(timerSeconds / 60)}:{(timerSeconds % 60).toString().padStart(2, '0')}
                         </div>
@@ -749,6 +1032,49 @@ export default function Game() {
           <p>Play responsibly. Consent is sexy.</p>
         </motion.footer>
       </div>
+
+      {/* Favorites Dialog (accessible from game screen too) */}
+      <Dialog open={showFavorites} onOpenChange={setShowFavorites}>
+        <DialogContent className="bg-slate-900 border-white/10 max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-rose-100 flex items-center gap-2">
+              <Star className="w-5 h-5 text-amber-400" /> Your Favorites
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 mt-4 max-h-[400px] overflow-y-auto">
+            {favorites.length === 0 ? (
+              <p className="text-rose-200/50 text-center py-8">
+                No favorites yet. Star prompts during the game to save them here!
+              </p>
+            ) : (
+              favorites.map((fav) => (
+                <div key={fav.id} className="p-3 rounded-lg bg-white/5 flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge variant="outline" className={fav.promptType === "truth" ? "border-blue-400/50 text-blue-300" : "border-orange-400/50 text-orange-300"}>
+                        {fav.promptType}
+                      </Badge>
+                      <Badge variant="outline" className="border-purple-400/50 text-purple-300 text-xs">
+                        {fav.intensity}
+                      </Badge>
+                    </div>
+                    <p className="text-rose-100 text-sm">{fav.promptText}</p>
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => removeFavoriteMutation.mutate(fav.id)}
+                    className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 shrink-0"
+                    data-testid={`button-remove-favorite-game-${fav.id}`}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
